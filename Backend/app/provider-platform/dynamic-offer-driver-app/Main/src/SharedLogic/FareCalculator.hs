@@ -36,9 +36,10 @@ import Domain.Types.FareParameters
 import qualified Domain.Types.FareParameters as DFParams
 import Domain.Types.FarePolicy
 import qualified Domain.Types.FarePolicy as DFP
-import EulerHS.Prelude hiding (id)
+import EulerHS.Prelude hiding (id, map)
 import Kernel.Prelude
 import Kernel.Utils.Common
+import Tools.Error (FarePolicyError (..))
 
 mkBreakupList :: (Money -> breakupItemPrice) -> (Text -> breakupItemPrice -> breakupItem) -> FareParameters -> [breakupItem]
 mkBreakupList mkPrice mkBreakupItem fareParams = do
@@ -61,6 +62,11 @@ mkBreakupList mkPrice mkBreakupItem fareParams = do
       mkCustomerExtraFareItem =
         fareParams.customerExtraFee <&> \ceFare -> do
           mkBreakupItem customerExtraFareCaption (mkPrice ceFare)
+
+      timeBasedChargeCaption = "TIME_BASED_CHARGE"
+      mkTimeBasedChargeCaption =
+        fareParams.timeBasedCharge <&> \tbCharge -> do
+          mkBreakupItem timeBasedChargeCaption (mkPrice tbCharge)
 
       totalFareFinalRounded = fareSum fareParams
       totalFareCaption = "TOTAL_FARE"
@@ -85,7 +91,8 @@ mkBreakupList mkPrice mkBreakupItem fareParams = do
       mbFixedGovtRateItem,
       mbServiceChargeItem,
       mbSelectedFareItem,
-      mkCustomerExtraFareItem
+      mkCustomerExtraFareItem,
+      mkTimeBasedChargeCaption
     ]
     <> detailsBreakups
   where
@@ -130,6 +137,7 @@ pureFareSum fareParams = do
     + fromMaybe 0 fareParams.waitingCharge
     + fromMaybe 0 fareParams.govtCharges
     + fromMaybe 0 fareParams.nightShiftCharge
+    + fromMaybe 0 fareParams.timeBasedCharge
     + partOfNightShiftCharge
     + notPartOfNightShiftCharge
     + platformFee
@@ -152,6 +160,7 @@ calculateFareParameters params = do
   logTagInfo "FareCalculator" $ "Initiating fare calculation for organization " +|| params.farePolicy.merchantId ||+ " and vehicle variant " +|| params.farePolicy.vehicleVariant ||+ ""
   let fp = params.farePolicy
   id <- generateGUID
+  unless (isJust (fp.averageSpeedOfVehicle) && fromJust (fp.averageSpeedOfVehicle) > 0) $ throwError AverageVehicleSpeedLessThanZero
   let isNightShiftChargeIncluded = isNightShift <$> fp.nightShiftBounds <*> Just params.rideTime
       (baseFare, nightShiftCharge, waitingChargeInfo, fareParametersDetails) = processFarePolicyDetails fp.farePolicyDetails
       (partOfNightShiftCharge, notPartOfNightShiftCharge, _) = countFullFareOfParamsDetails fareParametersDetails
@@ -168,6 +177,7 @@ calculateFareParameters params = do
           + notPartOfNightShiftCharge
       govtCharges =
         roundToIntegral . (fromIntegral fullRideCostN *) <$> (fp.govtCharges)
+      timeBasedChargeInfo = calculateTimeBasedFare params.distance fp.timeBasedCharge =<< fp.averageSpeedOfVehicle
       fullCompleteRideCost =
         {- without platformFee -}
         fullRideCostN
@@ -180,6 +190,7 @@ calculateFareParameters params = do
             serviceCharge = fp.serviceCharge,
             waitingCharge = resultWaitingCharge,
             nightShiftCharge = resultNightShiftCharge,
+            timeBasedCharge = timeBasedChargeInfo,
             nightShiftRateIfApplies = (\isCoefIncluded -> if isCoefIncluded then getNightShiftRate nightShiftCharge else Nothing) =<< isNightShiftChargeIncluded, -- Temp fix :: have to fix properly
             fareParametersDetails = case fp.farePolicyDetails of
               DFP.ProgressiveDetails _ -> fareParametersDetails
@@ -271,6 +282,12 @@ calculateFareParameters params = do
               cgst = Just . realToFrac $ baseFee * platformFeeInfo'.cgst,
               sgst = Just . realToFrac $ baseFee * platformFeeInfo'.sgst
             }
+    calculateTimeBasedFare :: Meters -> Maybe Minutes -> Kilometers -> Maybe Money
+    calculateTimeBasedFare distance timeBasedCharge avgSpeedOfVehicle = do
+      let distancePerKilometer = getKilometers $ metersToKilometers distance
+      let timeBasedCharge' = fromMaybe 1 timeBasedCharge
+      let timeBasedFare = Money $ (distancePerKilometer `div` avgSpeedOfVehicle.getKilometers) * timeBasedCharge'.getMinutes
+      if timeBasedFare > 0 then Just timeBasedFare else Nothing
 
 countFullFareOfParamsDetails :: DFParams.FareParametersDetails -> (Money, Money, Money)
 countFullFareOfParamsDetails = \case

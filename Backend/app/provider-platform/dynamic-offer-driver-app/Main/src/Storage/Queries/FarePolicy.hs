@@ -84,6 +84,8 @@ instance ToTType' BeamFP.FarePolicy FarePolicy where
         BeamFP.maxAllowedTripDistance = Domain.maxAllowedTripDistance <$> allowedTripDistanceBounds,
         BeamFP.minAllowedTripDistance = Domain.minAllowedTripDistance <$> allowedTripDistanceBounds,
         BeamFP.govtCharges = govtCharges,
+        BeamFP.averageSpeedOfVehicle = averageSpeedOfVehicle,
+        BeamFP.timeBasedCharge = timeBasedCharge,
         BeamFP.farePolicyType = getFarePolicyType $ FarePolicy {..},
         BeamFP.description = description,
         BeamFP.createdAt = createdAt,
@@ -124,6 +126,8 @@ instance FromTType' BeamFP.FarePolicy Domain.FarePolicy where
                 govtCharges = govtCharges,
                 driverExtraFeeBounds = nonEmpty fDEFB,
                 farePolicyDetails,
+                averageSpeedOfVehicle = averageSpeedOfVehicle,
+                timeBasedCharge = timeBasedCharge,
                 description = description,
                 createdAt = createdAt,
                 updatedAt = updatedAt
